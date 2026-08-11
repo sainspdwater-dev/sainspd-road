@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="ms" class="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sistem Pemantauan Turapan Jalan</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: { extend: { fontFamily: { sans: ['Inter', 'sans-serif'] }, colors: { corporate: { navy: '#1E3A8A', emerald: '#059669', light: '#F8FAFC', orange: '#EA580C', red: '#DC2626' } }, animation: { 'blink-slow': 'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite' } } }
+        }
+    </script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
+    <style>
+        body { @apply bg-corporate-light dark:bg-slate-900 text-slate-800 dark:text-slate-200; }
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-thumb { @apply bg-slate-300 dark:bg-slate-600 rounded-full; }
+        .leaflet-container { z-index: 10; font-family: 'Inter', sans-serif; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useMemo, useRef, useCallback } = React;
+
+        const Icons = {
+            Dashboard: <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path d="M2 10a8 8 0 018-8v8h8a8 8 0 11-16 0z" /><path d="M12 2.252A8.014 8.014 0 0117.748 8H12V2.252z" /></svg>,
+            List: <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M3 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1z" clipRule="evenodd" /></svg>,
+            Refresh: <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>,
+            Check: <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" /></svg>,
+            Warning: <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-orange-500" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" /></svg>,
+            Critical: <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-red-500" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" /></svg>,
+            Edit: <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"><path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z" /></svg>,
+            Map: <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+        };
+
+        const calculateAlarmStatus = (tarikhAduan, currentStatus, tarikhSemakStr) => {
+            if (currentStatus === 'Selesai') return { type: 'Selesai', color: 'bg-emerald-100 text-emerald-700', days: null, icon: Icons.Check };
+            
+            let targetDate = new Date(tarikhAduan);
+            if(isNaN(targetDate)) {
+                const parts = String(tarikhAduan).split(' ')[0].split('/');
+                if (parts.length === 3) targetDate = new Date(parts[2], parts[1] - 1, parts[0]);
+                else return { type: 'Unknown', color: 'bg-slate-100 text-slate-500', days: 0, icon: null };
+            }
+            targetDate.setDate(targetDate.getDate() + 30);
+
+            let checkDate = tarikhSemakStr ? new Date(tarikhSemakStr.split('/')[2].split(' ')[0], tarikhSemakStr.split('/')[1] - 1, tarikhSemakStr.split('/')[0]) : new Date();
+            if(isNaN(checkDate)) checkDate = new Date();
+            
+            checkDate.setHours(0,0,0,0); targetDate.setHours(0,0,0,0);
+            const diffDays = Math.ceil((targetDate - checkDate) / (1000 * 60 * 60 * 24));
+
+            if (diffDays < 0) return { type: 'OVERDUE', color: 'bg-red-900 text-white animate-pulse', days: diffDays, icon: Icons.Critical };
+            if (diffDays <= 3) return { type: 'Merah', color: 'bg-red-100 text-red-700', days: diffDays, icon: Icons.Critical };
+            if (diffDays <= 10) return { type: 'Kuning', color: 'bg-orange-100 text-orange-700', days: diffDays, icon: Icons.Warning };
+            return { type: 'Hijau', color: 'bg-emerald-100 text-emerald-700', days: diffDays, icon: Icons.Check };
+        };
+
+        const processRawData = (rows) => {
+            if (!rows || rows.length === 0) return [];
+            const headers = rows[0].map(h => String(h).replace(/\s+/g, ' ').trim().toUpperCase());
+            const idx = {
+                aduan: headers.indexOf('NO ADUAN'), lokasi: headers.indexOf('LOKASI'),
+                dma: headers.indexOf('DMA'), tarikh: headers.indexOf('TARIKH'),
+                map: headers.indexOf('MAP'), lat: headers.indexOf('LAT'), lng: headers.indexOf('LONG'),
+                bulan: headers.indexOf('BULAN'), status: headers.indexOf('STATUS'),
+                catatan: headers.indexOf('CATATAN') !== -1 ? headers.indexOf('CATATAN') : headers.indexOf('NOTED'),
+                tarikhSemak: headers.indexOf('TARIKH SEMAK')
+            };
+
+            return rows.slice(1).map((row) => {
+                const id = idx.aduan !== -1 ? String(row[idx.aduan]).trim() : '';
+                if (!id) return null;
+                const status = idx.status !== -1 && row[idx.status] ? String(row[idx.status]).trim() : 'Belum Disemak';
+                const tarikh = idx.tarikh !== -1 ? String(row[idx.tarikh]).trim() : '';
+                const tarikhSemak = idx.tarikhSemak !== -1 ? String(row[idx.tarikhSemak]).trim() : '';
+                return {
+                    id, lokasi: idx.lokasi !== -1 ? String(row[idx.lokasi]).trim() : '',
+                    dma: idx.dma !== -1 ? String(row[idx.dma]).trim() : '', tarikh,
+                    mapUrl: idx.map !== -1 ? String(row[idx.map]).trim() : '',
+                    lat: idx.lat !== -1 ? parseFloat(row[idx.lat]) || 0 : 0, lng: idx.lng !== -1 ? parseFloat(row[idx.lng]) || 0 : 0,
+                    bulan: idx.bulan !== -1 ? String(row[idx.bulan]).trim() : '',
+                    catatan: idx.catatan !== -1 ? String(row[idx.catatan]).trim() : '', status, tarikhSemak,
+                    alarm: calculateAlarmStatus(tarikh, status, tarikhSemak)
+                };
+            }).filter(Boolean).reverse();
+        };
+
+        const App = () => {
+            const [activeTab, setActiveTab] = useState('rumusan');
+            const [data, setData] = useState([]);
+            const [isLoading, setIsLoading] = useState(true);
+            const [toast, setToast] = useState(null); 
+
+            const CLOUDFLARE_URL = 'https://sains-api.sainspdwater.workers.dev';
+
+            const fetchData = useCallback(async () => {
+                setIsLoading(true);
+                try {
+                    const response = await fetch(CLOUDFLARE_URL, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ action: 'getData' })
+                    });
+                    const result = await response.json();
+                    if (result.success) setData(processRawData(result.data || []));
+                    else showToast(result.message, "error");
+                } catch (err) { showToast("Gagal berhubung ke pelayan.", "error"); }
+                setIsLoading(false);
+            }, []);
+
+            useEffect(() => { fetchData(); }, []);
+
+            const showToast = (message, type = 'success') => { setToast({ message, type }); setTimeout(() => setToast(null), 4000); };
+
+            const updateLocalData = (id, catatan, status) => {
+                setData(prev => prev.map(item => {
+                    if (item.id === id) {
+                        const d = new Date(); const pad = n => String(n).padStart(2, '0');
+                        const now = `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+                        return { ...item, catatan, status, tarikhSemak: now, alarm: calculateAlarmStatus(item.tarikh, status, now) };
+                    }
+                    return item;
+                }));
+            };
+
+            return (
+                <div className="min-h-screen flex flex-col font-sans">
+                    <header className="bg-corporate-navy text-white shadow-lg sticky top-0 z-50">
+                        <div className="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
+                            <h1 className="text-xl font-bold">Sistem Turapan <span className="text-corporate-emerald">PD</span></h1>
+                            <nav className="flex gap-2">
+                                <button onClick={() => setActiveTab('rumusan')} className={`px-4 py-2 rounded-md ${activeTab === 'rumusan' ? 'bg-corporate-emerald' : 'text-slate-300'}`}>Rumusan</button>
+                                <button onClick={() => setActiveTab('kemaskini')} className={`px-4 py-2 rounded-md ${activeTab === 'kemaskini' ? 'bg-corporate-emerald' : 'text-slate-300'}`}>Kemaskini</button>
+                            </nav>
+                            <button onClick={fetchData} className="flex items-center gap-2 text-sm text-slate-300 hover:text-white" disabled={isLoading}>
+                                {isLoading ? "Loading..." : "REFRESH"}
+                            </button>
+                        </div>
+                    </header>
+
+                    <main className="flex-grow max-w-7xl mx-auto w-full px-4 py-8 relative">
+                        {isLoading && data.length === 0 && <div className="text-center py-10 font-bold">Memuat turun data...</div>}
+                        {activeTab === 'rumusan' && !isLoading ? <DashboardTab data={data} /> : null}
+                        {activeTab === 'kemaskini' && !isLoading ? <TableTab data={data} showToast={showToast} updateLocalData={updateLocalData} API_URL={CLOUDFLARE_URL} /> : null}
+                    </main>
+                    
+                    {toast && (
+                        <div className={`fixed bottom-6 right-6 z-50 px-5 py-4 rounded-lg text-white font-medium ${toast.type === 'success' ? 'bg-emerald-600' : 'bg-red-600'}`}>
+                            {toast.message}
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        const DashboardTab = ({ data }) => {
+            const total = data.length;
+            const belumDisemak = data.filter(d => d.status === 'Belum Disemak').length;
+            const baikiSemula = data.filter(d => d.status === 'Baiki Semula').length;
+            const selesai = data.filter(d => d.status === 'Selesai').length;
+
+            return (
+                <div className="space-y-6">
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                        <div className="bg-white p-5 rounded-xl border border-slate-200">
+                            <div className="text-sm text-slate-500">Jumlah Aduan</div>
+                            <div className="text-3xl font-bold">{total}</div>
+                        </div>
+                        <div className="bg-white p-5 rounded-xl border border-slate-200">
+                            <div className="text-sm text-slate-500">Selesai</div>
+                            <div className="text-3xl font-bold text-emerald-600">{selesai}</div>
+                        </div>
+                        <div className="bg-white p-5 rounded-xl border border-slate-200">
+                            <div className="text-sm text-slate-500">Baiki Semula</div>
+                            <div className="text-3xl font-bold text-orange-600">{baikiSemula}</div>
+                        </div>
+                        <div className="bg-white p-5 rounded-xl border border-slate-200">
+                            <div className="text-sm text-slate-500">Belum Disemak</div>
+                            <div className="text-3xl font-bold text-slate-600">{belumDisemak}</div>
+                        </div>
+                    </div>
+                    <div className="bg-white p-6 rounded-xl border border-slate-200 h-[400px]">
+                        <h3 className="font-bold mb-4">Peta Lokasi</h3>
+                        <MapComponent data={data} />
+                    </div>
+                </div>
+            );
+        };
+
+        const MapComponent = ({ data }) => {
+            const mapRef = useRef(null);
+            const mapInstance = useRef(null);
+            useEffect(() => {
+                if (!mapInstance.current && mapRef.current) {
+                    mapInstance.current = L.map(mapRef.current).setView([2.5222, 101.7959], 10);
+                    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(mapInstance.current);
+                }
+                if (mapInstance.current) {
+                    mapInstance.current.eachLayer((layer) => { if (layer instanceof L.Marker) mapInstance.current.removeLayer(layer); });
+                    data.filter(d => d.lat && d.lng).forEach(item => {
+                        let color = '#3b82f6'; 
+                        if(item.alarm.type === 'Merah' || item.alarm.type === 'OVERDUE') color = '#dc2626';
+                        else if(item.alarm.type === 'Kuning') color = '#ea580c';
+                        else if(item.alarm.type === 'Hijau' || item.status === 'Selesai') color = '#059669';
+                        
+                        const icon = L.divIcon({ className: '', html: `<div style="background-color:${color}; width:14px; height:14px; border-radius:50%; border:2px solid white;"></div>`});
+                        L.marker([item.lat, item.lng], { icon }).bindPopup(`<b>${item.id}</b><br>${item.lokasi}`).addTo(mapInstance.current);
+                    });
+                }
+            }, [data]);
+            return <div ref={mapRef} className="w-full h-full rounded border"></div>;
+        };
+
+        const TableTab = ({ data, showToast, updateLocalData, API_URL }) => {
+            const [search, setSearch] = useState('');
+            const [selectedRecord, setSelectedRecord] = useState(null);
+
+            const filteredData = data.filter(d => d.id.toLowerCase().includes(search.toLowerCase()) || d.lokasi.toLowerCase().includes(search.toLowerCase()));
+
+            return (
+                <div className="bg-white rounded-xl shadow-lg border border-slate-200 flex flex-col h-[70vh]">
+                    <div className="p-4 border-b bg-slate-50 flex gap-4">
+                        <input type="text" placeholder="Cari ID / Lokasi..." className="px-4 py-2 border rounded-lg flex-1" value={search} onChange={e => setSearch(e.target.value)} />
+                    </div>
+                    <div className="flex-grow overflow-auto">
+                        <table className="w-full text-left text-sm whitespace-nowrap">
+                            <thead className="bg-white sticky top-0 border-b">
+                                <tr className="text-slate-500 uppercase text-xs">
+                                    <th className="p-4 font-semibold">No Aduan</th>
+                                    <th className="p-4 font-semibold">Lokasi</th>
+                                    <th className="p-4 font-semibold text-center">Status / Alarm</th>
+                                    <th className="p-4 font-semibold text-center">Tindakan</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100">
+                                {filteredData.map(row => (
+                                    <tr key={row.id} className="hover:bg-slate-50">
+                                        <td className="p-4 font-bold">{row.id}</td>
+                                        <td className="p-4 truncate max-w-[200px]" title={row.lokasi}>{row.lokasi}</td>
+                                        <td className="p-4 text-center">
+                                            <span className="px-2 py-1 rounded-full text-xs font-semibold bg-slate-100">{row.status}</span>
+                                            <div className={`mt-1 text-xs font-bold ${row.alarm.type === 'OVERDUE' ? 'text-red-600' : 'text-slate-500'}`}>
+                                                {row.alarm.days !== null ? (row.alarm.days < 0 ? 'OVERDUE' : `${row.alarm.days} Hari`) : 'Selesai'}
+                                            </div>
+                                        </td>
+                                        <td className="p-4 text-center">
+                                            <button onClick={() => setSelectedRecord(row)} className="p-2 bg-blue-100 text-blue-700 rounded-lg mr-2">Edit</button>
+                                            <a href={row.mapUrl} target="_blank" className="p-2 bg-slate-100 text-slate-700 rounded-lg inline-block">Map</a>
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                    {selectedRecord && <UpdateModal record={selectedRecord} onClose={() => setSelectedRecord(null)} showToast={showToast} updateLocalData={updateLocalData} API_URL={API_URL} />}
+                </div>
+            );
+        };
+
+        const UpdateModal = ({ record, onClose, showToast, updateLocalData, API_URL }) => {
+            const [status, setStatus] = useState(record.status === 'Belum Disemak' ? 'Sedang Dipantau' : record.status);
+            const [catatan, setCatatan] = useState(record.catatan);
+            const isCompleted = record.status === 'Selesai';
+
+            const handleSubmit = (e) => {
+                e.preventDefault();
+                if (status === 'Baiki Semula' && !catatan.trim()) { showToast("Catatan WAJIB untuk Baiki Semula", "error"); return; }
+                
+                updateLocalData(record.id, catatan, status);
+                
+                fetch(API_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: 'updateData', data: { noAduan: record.id, status, catatan } })
+                }).catch(err => console.error(err));
+
+                showToast("Berjaya disimpan.");
+                onClose();
+            };
+
+            return (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+                    <div className="bg-white rounded-2xl w-full max-w-md">
+                        <div className="p-5 border-b flex justify-between">
+                            <h2 className="font-bold text-lg">Kemaskini {record.id}</h2>
+                            <button onClick={onClose} className="text-slate-400">X</button>
+                        </div>
+                        <div className="p-5">
+                            <form id="updateForm" onSubmit={handleSubmit} className="space-y-4">
+                                <div>
+                                    <label className="block text-sm font-medium mb-1">Status</label>
+                                    <select className="w-full p-2 border rounded-lg" value={status} onChange={e => setStatus(e.target.value)} disabled={isCompleted}>
+                                        <option value="Sedang Dipantau">Sedang Dipantau</option>
+                                        <option value="Baiki Semula">Baiki Semula</option>
+                                        <option value="Selesai">Selesai</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium mb-1">Catatan</label>
+                                    <textarea className="w-full p-2 border rounded-lg" rows="3" value={catatan} onChange={e => setCatatan(e.target.value)} disabled={isCompleted}></textarea>
+                                </div>
+                            </form>
+                        </div>
+                        <div className="p-5 border-t bg-slate-50 flex justify-end gap-2">
+                            <button onClick={onClose} className="px-4 py-2 rounded-lg bg-slate-200">Batal</button>
+                            <button type="submit" form="updateForm" disabled={isCompleted} className="px-4 py-2 rounded-lg bg-emerald-600 text-white disabled:opacity-50">Simpan</button>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
