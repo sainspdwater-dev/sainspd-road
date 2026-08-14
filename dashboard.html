@@ -180,14 +180,17 @@
             const [filters, setFilters] = useState({ search: '', bulan: '', dma: '', status: '' });
             const debouncedSearch = useDebounce(filters.search, 300);
 
+            // Rujukan Versi untuk Smart Polling
+            const dataVersionRef = useRef(null);
+
             const fetchData = useCallback(async (force = false, retryCount = 0) => {
                 const now = new Date().getTime();
                 if (!force && lastFetch && (now - lastFetch) < 30000) return; 
                 
-                if (retryCount === 0) {
+                // OPTIMASI: Soft Refresh - Hanya tunjuk pusingan loading (skrin penuh) bila data kosong
+                if (retryCount === 0 && data.length === 0) {
                     setIsLoading(true);
                 }
-                setToast(null);
 
                 const CLOUDFLARE_URL = 'https://sains-api.sainspdwater.workers.dev';
 
@@ -233,9 +236,34 @@
                         showToast("Ralat Fetch: " + err.message, "error");
                     }
                 }
-            }, [lastFetch]);
+            }, [lastFetch, data.length]);
 
-            useEffect(() => { fetchData(); }, []);
+            // OPTIMASI: Smart Polling Checker
+            const checkDataVersion = useCallback(async () => {
+                try {
+                    const response = await fetch('https://sains-api.sainspdwater.workers.dev', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ action: 'checkVersion' })
+                    });
+                    const res = await response.json();
+                    if (res.success && res.version) {
+                        if (dataVersionRef.current !== null && dataVersionRef.current !== res.version) {
+                            fetchData(true); // Soft refresh jika versi berubah
+                        }
+                        dataVersionRef.current = res.version;
+                    }
+                } catch (err) {
+                    // Senyap, jangan ganggu user jika polling gagal
+                }
+            }, [fetchData]);
+
+            useEffect(() => { 
+                fetchData(); 
+                // Mulakan polling setiap 30 saat
+                const pollInterval = setInterval(checkDataVersion, 30000);
+                return () => clearInterval(pollInterval);
+            }, []);
 
             const toggleTheme = () => {
                 const newTheme = !darkMode;
@@ -769,7 +797,6 @@
         root.render(<App />);
     </script>
 
-    <!-- Skrip berat dialihkan ke bawah untuk mengelakkan render-blocking & melajukan FCP/LCP -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.1/jspdf.plugin.autotable.min.js"></script>
