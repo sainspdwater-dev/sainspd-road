@@ -5,7 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Sistem Pemantauan Turapan Jalan</title>
     
-    <!-- Preconnect untuk lajukan sambungan CDN & Font -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://unpkg.com" crossorigin>
     <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
@@ -180,46 +179,98 @@
             const [filters, setFilters] = useState({ search: '', bulan: '', dma: '', status: '' });
             const debouncedSearch = useDebounce(filters.search, 300);
 
-            // Rujukan Versi untuk Smart Polling
             const dataVersionRef = useRef(null);
+
+            // 🟢 SECURITY: Fungsi Logout Terpusat
+            const handleLogout = useCallback((message = null) => {
+                sessionStorage.removeItem('sains_token');
+                sessionStorage.removeItem('sains_login_time');
+                if (message) alert(message);
+                window.location.href = 'index.html';
+            }, []);
+
+            // 🟢 SECURITY: Perlindungan Sesi (Idle Timeout & Max Session)
+            useEffect(() => {
+                const token = sessionStorage.getItem('sains_token');
+                const loginTime = sessionStorage.getItem('sains_login_time');
+                
+                if (!token || !loginTime) {
+                    handleLogout("Akses Ditolak: Anda belum log masuk.");
+                    return;
+                }
+
+                // Max Session: 1 Jam (3600000 ms)
+                const checkMaxSession = setInterval(() => {
+                    if (Date.now() - parseInt(loginTime) > 3600000) {
+                        handleLogout("Sesi log masuk tamat tempoh (Maksimum 1 Jam). Sila log masuk semula.");
+                    }
+                }, 10000); // Check every 10 seconds
+
+                // Idle Timeout: 15 Minit (900000 ms)
+                let idleTimer;
+                const resetIdleTimer = () => {
+                    clearTimeout(idleTimer);
+                    idleTimer = setTimeout(() => {
+                        handleLogout("Sesi ditamatkan secara automatik kerana tiada aktiviti selama 15 minit.");
+                    }, 900000);
+                };
+
+                // Pantau pergerakan untuk reset Idle Timer
+                window.addEventListener('mousemove', resetIdleTimer);
+                window.addEventListener('keydown', resetIdleTimer);
+                window.addEventListener('scroll', resetIdleTimer);
+                window.addEventListener('click', resetIdleTimer);
+                window.addEventListener('touchstart', resetIdleTimer);
+                resetIdleTimer();
+
+                return () => {
+                    clearInterval(checkMaxSession);
+                    clearTimeout(idleTimer);
+                    window.removeEventListener('mousemove', resetIdleTimer);
+                    window.removeEventListener('keydown', resetIdleTimer);
+                    window.removeEventListener('scroll', resetIdleTimer);
+                    window.removeEventListener('click', resetIdleTimer);
+                    window.removeEventListener('touchstart', resetIdleTimer);
+                };
+            }, [handleLogout]);
 
             const fetchData = useCallback(async (force = false, retryCount = 0) => {
                 const now = new Date().getTime();
                 if (!force && lastFetch && (now - lastFetch) < 30000) return; 
                 
-                // OPTIMASI: Soft Refresh - Hanya tunjuk pusingan loading (skrin penuh) bila data kosong
-                if (retryCount === 0 && data.length === 0) {
-                    setIsLoading(true);
-                }
+                if (retryCount === 0 && data.length === 0) setIsLoading(true);
 
                 const CLOUDFLARE_URL = 'https://sains-api.sainspdwater.workers.dev';
+                const token = sessionStorage.getItem('sains_token'); // 🟢 Ambil Token Sesi
 
                 try {
                     const response = await fetch(CLOUDFLARE_URL, {
                         method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
+                        headers: { 
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${token}` // 🟢 Hantar Bearer Token
+                        },
                         body: JSON.stringify({ action: 'getData' })
                     });
                     
+                    if (response.status === 401) {
+                        handleLogout("Sesi tamat atau tidak sah.");
+                        return;
+                    }
+
                     const responseStr = await response.text();
                     let result;
-                    try {
-                        result = JSON.parse(responseStr);
-                    } catch (e) {
-                        throw new Error("Pelayan tidak menghantar JSON yang sah.");
-                    }
+                    try { result = JSON.parse(responseStr); } 
+                    catch (e) { throw new Error("Pelayan tidak menghantar JSON yang sah."); }
 
                     if (result.success) {
                         const rawData = result.data || [];
-                        if (rawData.length === 0) {
-                            setData([]);
-                        } else {
+                        if (rawData.length === 0) setData([]);
+                        else {
                             try {
                                 const processedData = processRawData(rawData);
                                 setData(processedData.reverse()); 
-                            } catch (err) {
-                                showToast(err.message, "error");
-                            }
+                            } catch (err) { showToast(err.message, "error"); }
                         }
                         setLastFetch(now);
                         setIsLoading(false);
@@ -228,42 +279,44 @@
                     }
                 } catch (err) {
                     if (retryCount < 2) {
-                        console.warn(`Fetch gagal, mencuba semula (${retryCount + 1}/2)...`);
                         setTimeout(() => fetchData(force, retryCount + 1), 3000); 
-                        return;
                     } else {
                         setIsLoading(false);
                         showToast("Ralat Fetch: " + err.message, "error");
                     }
                 }
-            }, [lastFetch, data.length]);
+            }, [lastFetch, data.length, handleLogout]);
 
-            // OPTIMASI: Smart Polling Checker
             const checkDataVersion = useCallback(async () => {
+                const token = sessionStorage.getItem('sains_token');
+                if(!token) return;
+
                 try {
                     const response = await fetch('https://sains-api.sainspdwater.workers.dev', {
                         method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
+                        headers: { 
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${token}`
+                        },
                         body: JSON.stringify({ action: 'checkVersion' })
                     });
+                    if (response.status === 401) return;
+                    
                     const res = await response.json();
                     if (res.success && res.version) {
                         if (dataVersionRef.current !== null && dataVersionRef.current !== res.version) {
-                            fetchData(true); // Soft refresh jika versi berubah
+                            fetchData(true); 
                         }
                         dataVersionRef.current = res.version;
                     }
-                } catch (err) {
-                    // Senyap, jangan ganggu user jika polling gagal
-                }
+                } catch (err) {}
             }, [fetchData]);
 
             useEffect(() => { 
                 fetchData(); 
-                // Mulakan polling setiap 30 saat
                 const pollInterval = setInterval(checkDataVersion, 30000);
                 return () => clearInterval(pollInterval);
-            }, []);
+            }, [fetchData, checkDataVersion]);
 
             const toggleTheme = () => {
                 const newTheme = !darkMode;
@@ -275,10 +328,6 @@
             const showToast = (message, type = 'success') => {
                 setToast({ message, type });
                 setTimeout(() => setToast(null), 4000);
-            };
-
-            const handleLogout = () => {
-                window.location.href = 'index.html';
             };
 
             const uniqueMonths = useMemo(() => {
@@ -349,7 +398,7 @@
 
                                 <div className="h-6 w-px bg-white/20 hidden sm:block"></div>
                                 
-                                <button onClick={handleLogout} className="flex items-center gap-2 text-sm font-medium text-rose-400 hover:text-rose-300 transition-colors p-2 sm:p-0">
+                                <button onClick={() => handleLogout()} className="flex items-center gap-2 text-sm font-medium text-rose-400 hover:text-rose-300 transition-colors p-2 sm:p-0">
                                     {Icons.Logout}
                                     <span className="hidden sm:inline">LOGOUT</span>
                                 </button>
@@ -370,7 +419,7 @@
                         {activeTab === 'rumusan' ? (
                             <DashboardTab data={data} darkMode={darkMode} uniqueMonths={uniqueMonths} uniqueDMAs={uniqueDMAs} />
                         ) : (
-                            <TableTab data={filteredData} filters={filters} setFilters={setFilters} uniqueMonths={uniqueMonths} uniqueDMAs={uniqueDMAs} showToast={showToast} updateLocalData={updateLocalData} />
+                            <TableTab data={filteredData} filters={filters} setFilters={setFilters} uniqueMonths={uniqueMonths} uniqueDMAs={uniqueDMAs} showToast={showToast} updateLocalData={updateLocalData} handleLogout={handleLogout} />
                         )}
                     </main>
 
@@ -558,7 +607,7 @@
             return <div ref={mapRef} className="w-full h-full rounded-lg border border-slate-200 dark:border-slate-700"></div>;
         };
 
-        const TableTab = ({ data, filters, setFilters, uniqueMonths, uniqueDMAs, showToast, updateLocalData }) => {
+        const TableTab = ({ data, filters, setFilters, uniqueMonths, uniqueDMAs, showToast, updateLocalData, handleLogout }) => {
             const [currentPage, setCurrentPage] = useState(1);
             const itemsPerPage = 50;
             const [selectedRecord, setSelectedRecord] = useState(null);
@@ -627,12 +676,12 @@
                         </div>
                     </div>
 
-                    {selectedRecord && <UpdateModal record={selectedRecord} onClose={() => setSelectedRecord(null)} showToast={showToast} updateLocalData={updateLocalData} />}
+                    {selectedRecord && <UpdateModal record={selectedRecord} onClose={() => setSelectedRecord(null)} showToast={showToast} updateLocalData={updateLocalData} handleLogout={handleLogout} />}
                 </div>
             );
         };
 
-        const UpdateModal = ({ record, onClose, showToast, updateLocalData }) => {
+        const UpdateModal = ({ record, onClose, showToast, updateLocalData, handleLogout }) => {
             const isCompleted = record.status === 'Selesai';
             
             let initialStatus = record.status;
@@ -664,6 +713,7 @@
                 if (updateLocalData) updateLocalData(record.id, catatan, status);
 
                 const CLOUDFLARE_URL = 'https://sains-api.sainspdwater.workers.dev';
+                const token = sessionStorage.getItem('sains_token'); // 🟢 Ambil Token Sesi
                 const payload = {
                     noAduan: String(record.id).trim(),
                     status: status,
@@ -672,8 +722,15 @@
 
                 fetch(CLOUDFLARE_URL, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${token}` // 🟢 Hantar Bearer Token
+                    },
                     body: JSON.stringify({ action: 'updateData', data: payload })
+                }).then(res => {
+                    if (res.status === 401) {
+                        handleLogout("Sesi log masuk telah tamat. Sila log masuk semula.");
+                    }
                 }).catch(err => console.error("Ralat kemaskini pelayan:", err));
 
                 setSuccessData({
