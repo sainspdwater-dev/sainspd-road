@@ -181,15 +181,26 @@
 
             const dataVersionRef = useRef(null);
 
-            // 泙 SECURITY: Fungsi Logout Terpusat
+            // 🔐 SECURITY: Fungsi Logout Terpusat (Guna replace supaya history tertindih)
             const handleLogout = useCallback((message = null) => {
                 sessionStorage.removeItem('sains_token');
                 sessionStorage.removeItem('sains_login_time');
                 if (message) alert(message);
-                window.location.href = 'index.html';
+                window.location.replace('index.html');
             }, []);
 
-            // 泙 SECURITY: Perlindungan Sesi (Idle Timeout & Max Session)
+            // 🔐 SECURITY: Halang akses dari bfcache (jika butang back ditekan selepas logout)
+            useEffect(() => {
+                const handlePageShow = (event) => {
+                    if (event.persisted || !sessionStorage.getItem('sains_token')) {
+                        window.location.replace('index.html');
+                    }
+                };
+                window.addEventListener('pageshow', handlePageShow);
+                return () => window.removeEventListener('pageshow', handlePageShow);
+            }, []);
+
+            // 🔐 SECURITY: Perlindungan Sesi (Idle Timeout & Max Session)
             useEffect(() => {
                 const token = sessionStorage.getItem('sains_token');
                 const loginTime = sessionStorage.getItem('sains_login_time');
@@ -241,14 +252,14 @@
                 if (retryCount === 0 && data.length === 0) setIsLoading(true);
 
                 const CLOUDFLARE_URL = 'https://sains-api.sainspdwater.workers.dev';
-                const token = sessionStorage.getItem('sains_token'); // 泙 Ambil Token Sesi
+                const token = sessionStorage.getItem('sains_token'); // 🔐 Ambil Token Sesi
 
                 try {
                     const response = await fetch(CLOUDFLARE_URL, {
                         method: 'POST',
                         headers: { 
                             'Content-Type': 'application/json',
-                            'Authorization': `Bearer ${token}` // 泙 Hantar Bearer Token
+                            'Authorization': `Bearer ${token}` // 🔐 Hantar Bearer Token
                         },
                         body: JSON.stringify({ action: 'getData' })
                     });
@@ -713,7 +724,7 @@
                 if (updateLocalData) updateLocalData(record.id, catatan, status);
 
                 const CLOUDFLARE_URL = 'https://sains-api.sainspdwater.workers.dev';
-                const token = sessionStorage.getItem('sains_token'); // 泙 Ambil Token Sesi
+                const token = sessionStorage.getItem('sains_token'); // 🔐 Ambil Token Sesi
                 const payload = {
                     noAduan: String(record.id).trim(),
                     status: status,
@@ -724,7 +735,7 @@
                     method: 'POST',
                     headers: { 
                         'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${token}` // 泙 Hantar Bearer Token
+                        'Authorization': `Bearer ${token}` // 🔐 Hantar Bearer Token
                     },
                     body: JSON.stringify({ action: 'updateData', data: payload })
                 }).then(res => {
