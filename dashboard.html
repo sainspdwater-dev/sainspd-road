@@ -181,7 +181,6 @@
 
             const dataVersionRef = useRef(null);
 
-            // 🔐 SECURITY: Fungsi Logout Terpusat (Guna replace supaya history tertindih)
             const handleLogout = useCallback((message = null) => {
                 sessionStorage.removeItem('sains_token');
                 sessionStorage.removeItem('sains_login_time');
@@ -189,7 +188,6 @@
                 window.location.replace('index.html');
             }, []);
 
-            // 🔐 SECURITY: Halang akses dari bfcache (jika butang back ditekan selepas logout)
             useEffect(() => {
                 const handlePageShow = (event) => {
                     if (event.persisted || !sessionStorage.getItem('sains_token')) {
@@ -200,7 +198,6 @@
                 return () => window.removeEventListener('pageshow', handlePageShow);
             }, []);
 
-            // 🔐 SECURITY: Perlindungan Sesi (Idle Timeout & Max Session)
             useEffect(() => {
                 const token = sessionStorage.getItem('sains_token');
                 const loginTime = sessionStorage.getItem('sains_login_time');
@@ -210,14 +207,12 @@
                     return;
                 }
 
-                // Max Session: 1 Jam (3600000 ms)
                 const checkMaxSession = setInterval(() => {
                     if (Date.now() - parseInt(loginTime) > 3600000) {
                         handleLogout("Sesi log masuk tamat tempoh (Maksimum 1 Jam). Sila log masuk semula.");
                     }
-                }, 10000); // Check every 10 seconds
+                }, 10000);
 
-                // Idle Timeout: 15 Minit (900000 ms)
                 let idleTimer;
                 const resetIdleTimer = () => {
                     clearTimeout(idleTimer);
@@ -226,7 +221,6 @@
                     }, 900000);
                 };
 
-                // Pantau pergerakan untuk reset Idle Timer
                 window.addEventListener('mousemove', resetIdleTimer);
                 window.addEventListener('keydown', resetIdleTimer);
                 window.addEventListener('scroll', resetIdleTimer);
@@ -252,14 +246,14 @@
                 if (retryCount === 0 && data.length === 0) setIsLoading(true);
 
                 const CLOUDFLARE_URL = 'https://sains-api.sainspdwater.workers.dev';
-                const token = sessionStorage.getItem('sains_token'); // 🔐 Ambil Token Sesi
+                const token = sessionStorage.getItem('sains_token');
 
                 try {
                     const response = await fetch(CLOUDFLARE_URL, {
                         method: 'POST',
                         headers: { 
                             'Content-Type': 'application/json',
-                            'Authorization': `Bearer ${token}` // 🔐 Hantar Bearer Token
+                            'Authorization': `Bearer ${token}`
                         },
                         body: JSON.stringify({ action: 'getData' })
                     });
@@ -707,8 +701,9 @@
             const [catatan, setCatatan] = useState(cleanCatatan(record.catatan)); 
             const [errorMsg, setErrorMsg] = useState('');
             const [successData, setSuccessData] = useState(null);
+            const [isCheckingGPS, setIsCheckingGPS] = useState(false); // GPS state
 
-            const handleSubmit = (e) => {
+            const handleSubmit = async (e) => {
                 e.preventDefault(); 
                 setErrorMsg('');
 
@@ -717,46 +712,105 @@
                     return;
                 }
 
-                const d = new Date();
-                const pad = (n) => String(n).padStart(2, '0');
-                const nowTimestamp = `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+                const proceedUpdate = (verifyLat = '', verifyLng = '', radiusStr = '') => {
+                    const d = new Date();
+                    const pad = (n) => String(n).padStart(2, '0');
+                    const nowTimestamp = `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 
-                if (updateLocalData) updateLocalData(record.id, catatan, status);
+                    if (updateLocalData) updateLocalData(record.id, catatan, status);
 
-                const CLOUDFLARE_URL = 'https://sains-api.sainspdwater.workers.dev';
-                const token = sessionStorage.getItem('sains_token'); // 🔐 Ambil Token Sesi
-                const payload = {
-                    noAduan: String(record.id).trim(),
-                    status: status,
-                    catatan: catatan
+                    const CLOUDFLARE_URL = 'https://sains-api.sainspdwater.workers.dev';
+                    const token = sessionStorage.getItem('sains_token'); 
+                    const payload = {
+                        noAduan: String(record.id).trim(),
+                        status: status,
+                        catatan: catatan,
+                        verifyLat: verifyLat,
+                        verifyLng: verifyLng,
+                        radius: radiusStr
+                    };
+
+                    fetch(CLOUDFLARE_URL, {
+                        method: 'POST',
+                        headers: { 
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${token}` 
+                        },
+                        body: JSON.stringify({ action: 'updateData', data: payload })
+                    }).then(res => {
+                        if (res.status === 401) {
+                            handleLogout("Sesi log masuk telah tamat. Sila log masuk semula.");
+                        }
+                    }).catch(err => console.error("Ralat kemaskini pelayan:", err));
+
+                    setSuccessData({
+                        status: status,
+                        catatan: catatan || 'Tiada catatan',
+                        id: record.id,
+                        tarikhSemak: nowTimestamp,
+                        dma: record.dma,
+                        lokasi: record.lokasi,
+                        mapUrl: record.mapUrl,
+                        radiusInfo: radiusStr
+                    });
                 };
 
-                fetch(CLOUDFLARE_URL, {
-                    method: 'POST',
-                    headers: { 
-                        'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${token}` // 🔐 Hantar Bearer Token
-                    },
-                    body: JSON.stringify({ action: 'updateData', data: payload })
-                }).then(res => {
-                    if (res.status === 401) {
-                        handleLogout("Sesi log masuk telah tamat. Sila log masuk semula.");
+                // ---- LOGIK GEOFENCING 50 METER & ACCURACY > 60 ----
+                if (status === 'Selesai') {
+                    if (!navigator.geolocation) {
+                        setErrorMsg("Ralat: Pelayar anda tidak menyokong fungsi GPS.");
+                        return;
                     }
-                }).catch(err => console.error("Ralat kemaskini pelayan:", err));
 
-                setSuccessData({
-                    status: status,
-                    catatan: catatan || 'Tiada catatan',
-                    id: record.id,
-                    tarikhSemak: nowTimestamp,
-                    dma: record.dma,
-                    lokasi: record.lokasi,
-                    mapUrl: record.mapUrl
-                });
+                    if (!record.lat || !record.lng) {
+                        setErrorMsg("Ralat: Koordinat tapak asal tiada dalam pangkalan data. Pengesahan jarak tidak dapat dilakukan.");
+                        return;
+                    }
+
+                    setIsCheckingGPS(true);
+
+                    navigator.geolocation.getCurrentPosition(
+                        (position) => {
+                            setIsCheckingGPS(false);
+                            const userLat = position.coords.latitude;
+                            const userLng = position.coords.longitude;
+                            const accuracy = position.coords.accuracy;
+
+                            if (accuracy > 60) {
+                                setErrorMsg(`Amaran Isyarat Lemah: Ketepatan GPS telefon anda ialah ±${Math.round(accuracy)}m. Sila keluar ke kawasan lapang tanpa halangan.`);
+                                return;
+                            }
+
+                            const userPoint = L.latLng(userLat, userLng);
+                            const targetPoint = L.latLng(record.lat, record.lng);
+                            const jarakMeter = userPoint.distanceTo(targetPoint);
+
+                            if (jarakMeter <= 50) {
+                                proceedUpdate(userLat, userLng, `${Math.round(jarakMeter)} Meter`);
+                            } else {
+                                setErrorMsg(`Tindakan Ditolak: Anda Perlu Berada Berdekatan Di Tapak! Jarak sebenar anda dari tapak turap ialah ${Math.round(jarakMeter)} meter (Had Maksima: 50m).`);
+                            }
+                        },
+                        (error) => {
+                            setIsCheckingGPS(false);
+                            let msg = "Gagal mengesan lokasi GPS.";
+                            if (error.code === error.PERMISSION_DENIED) msg = "Sila benarkan akses GPS pada pelayar anda.";
+                            if (error.code === error.POSITION_UNAVAILABLE) msg = "Maklumat GPS tidak tersedia. Pastikan GPS diaktifkan.";
+                            setErrorMsg(msg);
+                        },
+                        { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+                    );
+                } else {
+                    proceedUpdate();
+                }
             };
 
             if (successData) {
-                const waText = `*STATUS* - ${successData.status}\n*CATATAN* - ${successData.catatan}\n*NO ADUAN* - ${successData.id}\n*TARIKH SEMAK* - ${successData.tarikhSemak}\n*DMA* - ${successData.dma}\n*LOKASI / TEMPAT* - ${successData.lokasi}\n*MAP* - ${successData.mapUrl}`;
+                let waText = `*STATUS* - ${successData.status}\n*CATATAN* - ${successData.catatan}\n*NO ADUAN* - ${successData.id}\n*TARIKH SEMAK* - ${successData.tarikhSemak}\n*DMA* - ${successData.dma}\n*LOKASI / TEMPAT* - ${successData.lokasi}\n*MAP* - ${successData.mapUrl}`;
+                
+                if (successData.radiusInfo) {
+                    waText += `\n*PENGESAHAN JARAK* - Terbukti Sah di tapak (Dalam radius ${successData.radiusInfo})`;
+                }
 
                 const handleCopy = () => {
                     navigator.clipboard.writeText(waText);
@@ -852,8 +906,8 @@
                         
                         <div className="p-4 sm:p-5 border-t border-slate-200 dark:border-slate-700 flex flex-col sm:flex-row justify-end gap-3 bg-slate-50 dark:bg-slate-900 shrink-0">
                             <button type="button" onClick={onClose} className="w-full sm:w-auto px-5 py-2 rounded-lg font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors text-sm">Batal</button>
-                            <button type="submit" form="updateForm" disabled={isCompleted} className="w-full sm:w-auto px-5 py-2 rounded-lg font-medium bg-corporate-emerald text-white hover:bg-emerald-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 shadow-md text-sm">
-                                Simpan Kemaskini
+                            <button type="submit" form="updateForm" disabled={isCompleted || isCheckingGPS} className="w-full sm:w-auto px-5 py-2 rounded-lg font-medium bg-corporate-emerald text-white hover:bg-emerald-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 shadow-md text-sm">
+                                {isCheckingGPS ? "Mengesahkan GPS..." : "Simpan Kemaskini"}
                             </button>
                         </div>
                     </div>
